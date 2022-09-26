@@ -5,17 +5,27 @@ import (
 	"os"
 )
 
-type dal struct {
-	file *os.File
+type pgnum uint64
+
+type page struct {
+	num  pgnum
+	data []byte
 }
 
-func newDal(path string) (*dal, error) {
-	dal := &dal{}
+type dal struct {
+	file     *os.File
+	pageSize int
+}
+
+func newDal(path string, pageSize int) (*dal, error) {
 	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return nil, err
 	}
-	dal.file = file
+	dal := &dal{
+		file,
+		pageSize,
+	}
 	return dal, nil
 }
 
@@ -28,4 +38,33 @@ func (d *dal) close() error {
 		d.file = nil
 	}
 	return nil
+}
+
+func (d *dal) allocateEmptyPage() *page {
+	return &page{
+		data: make([]byte, d.pageSize),
+	}
+}
+
+func (d *dal) readPage(pageNum pgnum) (*page, error) {
+	p := d.allocateEmptyPage()
+
+	// Notice how the correct offset calculation is performed
+	// using the page number and page size
+	offset := int(pageNum) * d.pageSize
+
+	// Then we read the data at the correct offset
+	_, err := d.file.ReadAt(p.data, int64(offset))
+	if err != nil {
+		return nil, err
+	}
+	return p, err
+}
+
+func (d *dal) writePage(p *page) error {
+	// Likewise, we calculate the correct offset
+	// and write at the correct position
+	offset := int64(p.num) * int64(d.pageSize)
+	_, err := d.file.WriteAt(p.data, offset)
+	return err
 }
