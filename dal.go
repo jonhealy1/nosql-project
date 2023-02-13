@@ -15,6 +15,8 @@ type page struct {
 type dal struct {
 	file     *os.File
 	pageSize int
+
+	*freelist
 }
 
 func newDal(path string, pageSize int) (*dal, error) {
@@ -25,6 +27,7 @@ func newDal(path string, pageSize int) (*dal, error) {
 	dal := &dal{
 		file,
 		pageSize,
+		newFreelist(),
 	}
 	return dal, nil
 }
