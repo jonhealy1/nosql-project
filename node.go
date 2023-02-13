@@ -99,3 +99,46 @@ func (n *Node) serialize(buf []byte) []byte {
 
 	return buf
 }
+
+func (n *Node) deserialize(buf []byte) {
+	leftPos := 0
+
+	// Read header
+	isLeaf := uint16(buf[0])
+
+	itemsCount := int(binary.LittleEndian.Uint16(buf[1:3]))
+	leftPos += 3
+
+	// Read body
+	for i := 0; i < itemsCount; i++ {
+		if isLeaf == 0 { // False
+			pageNum := binary.LittleEndian.Uint64(buf[leftPos:])
+			leftPos += pageNumSize
+
+			n.childNodes = append(n.childNodes, pgnum(pageNum))
+		}
+
+		// Read offset
+		offset := binary.LittleEndian.Uint16(buf[leftPos:])
+		leftPos += 2
+
+		klen := uint16(buf[int(offset)])
+		offset += 1
+
+		key := buf[offset : offset+klen]
+		offset += klen
+
+		vlen := uint16(buf[int(offset)])
+		offset += 1
+
+		value := buf[offset : offset+vlen]
+		offset += vlen
+		n.items = append(n.items, newItem(key, value))
+	}
+
+	if isLeaf == 0 { // False
+		// Read the last child node
+		pageNum := pgnum(binary.LittleEndian.Uint64(buf[leftPos:]))
+		n.childNodes = append(n.childNodes, pageNum)
+	}
+}
