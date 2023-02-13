@@ -17,5 +17,3 @@
 .vscode
 
 *.DS_Store
-
-build_nosql_db.pdf
