@@ -17,3 +17,6 @@
 .vscode
 
 *.DS_Store
+
+db.db
+nosql-project
