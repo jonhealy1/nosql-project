@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 )
@@ -16,18 +17,55 @@ type dal struct {
 	file     *os.File
 	pageSize int
 
+	*meta
 	*freelist
 }
 
-func newDal(path string, pageSize int) (*dal, error) {
-	file, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0666)
-	if err != nil {
-		return nil, err
-	}
+func newDal(path string) (*dal, error) {
 	dal := &dal{
-		file,
-		pageSize,
-		newFreelist(),
+		meta:     newEmptyMeta(),
+		pageSize: os.Getpagesize(),
+	}
+
+	// exist
+	if _, err := os.Stat(path); err == nil {
+		dal.file, err = os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0666)
+		if err != nil {
+			_ = dal.close()
+			return nil, err
+		}
+
+		meta, err := dal.readMeta()
+		if err != nil {
+			return nil, err
+		}
+		dal.meta = meta
+
+		freelist, err := dal.readFreelist()
+		if err != nil {
+			return nil, err
+		}
+		dal.freelist = freelist
+		// doesn't exist
+	} else if errors.Is(err, os.ErrNotExist) {
+		// init freelist
+		dal.file, err = os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0666)
+		if err != nil {
+			_ = dal.close()
+			return nil, err
+		}
+
+		dal.freelist = newFreelist()
+		dal.freelistPage = dal.getNextPage()
+		_, err := dal.writeFreelist()
+		if err != nil {
+			return nil, err
+		}
+
+		// write meta page
+		_, err = dal.writeMeta(dal.meta) // other error
+	} else {
+		return nil, err
 	}
 	return dal, nil
 }
@@ -40,6 +78,7 @@ func (d *dal) close() error {
 		}
 		d.file = nil
 	}
+
 	return nil
 }
 
@@ -52,11 +91,7 @@ func (d *dal) allocateEmptyPage() *page {
 func (d *dal) readPage(pageNum pgnum) (*page, error) {
 	p := d.allocateEmptyPage()
 
-	// Notice how the correct offset calculation is performed
-	// using the page number and page size
 	offset := int(pageNum) * d.pageSize
-
-	// Then we read the data at the correct offset
 	_, err := d.file.ReadAt(p.data, int64(offset))
 	if err != nil {
 		return nil, err
@@ -65,11 +100,33 @@ func (d *dal) readPage(pageNum pgnum) (*page, error) {
 }
 
 func (d *dal) writePage(p *page) error {
-	// Likewise, we calculate the correct offset
-	// and write at the correct position
 	offset := int64(p.num) * int64(d.pageSize)
 	_, err := d.file.WriteAt(p.data, offset)
 	return err
+}
+
+func (d *dal) readFreelist() (*freelist, error) {
+	p, err := d.readPage(d.freelistPage)
+	if err != nil {
+		return nil, err
+	}
+
+	freelist := newFreelist()
+	freelist.deserialize(p.data)
+	return freelist, nil
+}
+
+func (d *dal) writeFreelist() (*page, error) {
+	p := d.allocateEmptyPage()
+	p.num = d.freelistPage
+	d.freelist.serialize(p.data)
+
+	err := d.writePage(p)
+	if err != nil {
+		return nil, err
+	}
+	d.freelistPage = p.num
+	return p, nil
 }
 
 func (d *dal) writeMeta(meta *meta) (*page, error) {
