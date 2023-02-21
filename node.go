@@ -1,6 +1,9 @@
 package main
 
-import "encoding/binary"
+import (
+	"bytes"
+	"encoding/binary"
+)
 
 type Item struct {
 	key   []byte
@@ -28,6 +31,21 @@ func newItem(key []byte, value []byte) *Item {
 
 func (n *Node) isLeaf() bool {
 	return len(n.childNodes) == 0
+}
+
+func (n *Node) writeNode(node *Node) *Node {
+	node, _ = n.dal.writeNode(node)
+	return node
+}
+
+func (n *Node) writeNodes(nodes ...*Node) {
+	for _, node := range nodes {
+		n.writeNode(node)
+	}
+}
+
+func (n *Node) getNode(pageNum pgnum) (*Node, error) {
+	return n.dal.getNode(pageNum)
 }
 
 func (n *Node) serialize(buf []byte) []byte {
@@ -143,35 +161,52 @@ func (n *Node) deserialize(buf []byte) {
 	}
 }
 
-func (d *dal) getNode(pageNum pgnum) (*Node, error) {
-	p, err := d.readPage(pageNum)
+// findKey searches for a key inside the tree. Once the key is found, the parent node and the correct index are returned
+// so the key itself can be accessed in the following way parent[index].
+// If the key isn't found, a falsey answer is returned.
+func (n *Node) findKey(key []byte) (int, *Node, error) {
+	index, node, err := findKeyHelper(n, key)
 	if err != nil {
-		return nil, err
+		return -1, nil, err
 	}
-	node := NewEmptyNode()
-	node.deserialize(p.data)
-	node.pageNum = pageNum
-	return node, nil
+	return index, node, nil
 }
 
-func (d *dal) writeNode(n *Node) (*Node, error) {
-	p := d.allocateEmptyPage()
-	if n.pageNum == 0 {
-		p.num = d.getNextPage()
-		n.pageNum = p.num
-	} else {
-		p.num = n.pageNum
+func findKeyHelper(node *Node, key []byte) (int, *Node, error) {
+	// Search for the key inside the node
+	wasFound, index := node.findKeyInNode(key)
+	if wasFound {
+		return index, node, nil
 	}
 
-	p.data = n.serialize(p.data)
+	// If we reached a leaf node and the key wasn't found, it means it doesn't exist.
+	if node.isLeaf() {
+		return -1, nil, nil
+	}
 
-	err := d.writePage(p)
+	// Else keep searching the tree
+	nextChild, err := node.getNode(node.childNodes[index])
 	if err != nil {
-		return nil, err
+		return -1, nil, err
 	}
-	return n, nil
+	return findKeyHelper(nextChild, key)
 }
 
-func (d *dal) deleteNode(pageNum pgnum) {
-	d.releasePage(pageNum)
+// findKeyInNode iterates all the items and finds the key. If the key is found, then the item is returned. If the key
+// isn't found then return the index where it should have been (the first index that key is greater than it's previous)
+func (n *Node) findKeyInNode(key []byte) (bool, int) {
+	for i, existingItem := range n.items {
+		res := bytes.Compare(existingItem.key, key)
+		if res == 0 { // Keys match
+			return true, i
+		}
+
+		// The key is bigger than the previous item, so it doesn't exist in the node, but may exist in child nodes.
+		if res == 1 {
+			return false, i
+		}
+	}
+
+	// The key isn't bigger than any of the items which means it's in the last index.
+	return false, len(n.items)
 }
